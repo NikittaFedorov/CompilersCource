@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <SDL2/SDL.h>
 #include <time.h>
+#include <stdio.h>
 #include "sim.h"
 
 #define SIM_Y_SIZE (FIELD_HEIGHT * CELL_SIZE)
@@ -9,25 +10,27 @@
 
 static SDL_Renderer *Renderer = NULL;
 static SDL_Window *Window = NULL;
+static int should_exit = 0;
 
 void simInit() {
+    printf("SDL_Init...\n");
     SDL_Init(SDL_INIT_VIDEO);
+    printf("Creating window...\n");
     SDL_CreateWindowAndRenderer(SIM_X_SIZE, SIM_Y_SIZE, 0, &Window, &Renderer);
     SDL_SetRenderDrawColor(Renderer, 0, 0, 0, 0);
     SDL_RenderClear(Renderer);
     srand(time(NULL));
+    printf("Window created: %dx%d\n", SIM_X_SIZE, SIM_Y_SIZE);
     simFlush();
 }
 
 void simExit() {
-    SDL_Event event;
-    while (1) {
-        if (SDL_PollEvent(&event) && event.type == SDL_QUIT)
-            break;
-    }
+    printf("Exiting...\n");
+    should_exit = 1;
     SDL_DestroyRenderer(Renderer);
     SDL_DestroyWindow(Window);
     SDL_Quit();
+    exit(0);
 }
 
 void simFlush() {
@@ -36,6 +39,7 @@ void simFlush() {
 }
 
 void simFillRect(int x, int y, int w, int h, int rgb) {
+    // printf("Drawing at (%d, %d) color: 0x%06X\n", x, y, rgb);
     assert(0 <= x && x + w <= SIM_X_SIZE);
     assert(0 <= y && y + h <= SIM_Y_SIZE);
     Uint8 r = (rgb >> 16) & 0xFF;
@@ -59,7 +63,11 @@ void simDelay(int ms) {
 }
 
 int checkFinish() {
-    if (SDL_HasEvent(SDL_QUIT) != SDL_TRUE)
-        return 0;
-    return 1;
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+        if (event.type == SDL_QUIT) {
+            return 1;
+        }
+    }
+    return should_exit;
 }
