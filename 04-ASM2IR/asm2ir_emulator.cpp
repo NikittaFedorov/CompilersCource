@@ -14,6 +14,7 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 
 using ASM::CPUState;
 
@@ -72,6 +73,20 @@ extern "C" void do_CMP(uint32_t rd, uint32_t rs1, uint32_t rs2) {
     if (rd < 16 && rs1 < 16 && rs2 < 16) {
         cpu.regs[rd] = (cpu.regs[rs1] == cpu.regs[rs2]) ? 1 : 0;
         printf("do_CMP: x%d = (x%d == x%d) -> %d\n", rd, rs1, rs2, cpu.regs[rd]);
+    }
+}
+
+extern "C" void do_CMP_LT(uint32_t rd, uint32_t rs1, uint32_t rs2) {
+    if (rd < 16 && rs1 < 16 && rs2 < 16) {
+        cpu.regs[rd] = (cpu.regs[rs1] < cpu.regs[rs2]) ? 1 : 0;
+        printf("do_CMP_LT: x%d = (x%d < x%d) -> %d\n", rd, rs1, rs2, cpu.regs[rd]);
+    }
+}
+
+extern "C" void do_CMP_GT(uint32_t rd, uint32_t rs1, uint32_t rs2) {
+    if (rd < 16 && rs1 < 16 && rs2 < 16) {
+        cpu.regs[rd] = (cpu.regs[rs1] > cpu.regs[rs2]) ? 1 : 0;
+        printf("do_CMP_GT: x%d = (x%d > x%d) -> %d\n", rd, rs1, rs2, cpu.regs[rd]);
     }
 }
 
@@ -197,23 +212,37 @@ std::vector<std::unique_ptr<ASM::Instruction>> parseAssembly(const std::string& 
     
     std::unordered_map<std::string, uint32_t> labels;
     
-    // Первый проход: сбор меток
+    // Множество известных инструкций
+    std::unordered_set<std::string> known_instructions = {
+        "MOV", "ADD", "SUB", "MUL", "AND", "OR", "XOR", 
+        "JMP", "JZ", "JNZ", "HALT", "INIT_FIELD", "RANDOM_INIT",
+        "CALC_NEIGHBORS", "UPDATE_CELL", "SWAP_BUFFERS", "DRAW_FIELD",
+        "DELAY", "FLUSH", "CHECK_FINISH", "CMP", "CMP_LT", "CMP_GT"
+    };
+    
+    // Первый проход: сбор меток ТОЛЬКО для известных инструкций
     uint32_t pc = 0;
     while (std::getline(file, line)) {
         std::istringstream iss(line);
         std::string token;
         if (!(iss >> token)) continue;
         
+        // Пропускаем комментарии
+        if (token == ";") continue;
+        
         if (token.back() == ':') {
             std::string label = token.substr(0, token.size() - 1);
             labels[label] = pc;
             printf("Found label: %s at PC %d\n", label.c_str(), pc);
-        } else if (token != "CMP") { // Пропускаем CMP - это псевдоинструкция
+        } 
+        // Увеличиваем PC только для известных инструкций
+        else if (known_instructions.find(token) != known_instructions.end()) {
             pc++;
+            printf("First pass: PC increased to %d for instruction: %s\n", pc, token.c_str());
         }
     }
     
-    // Второй проход: разбор инструкций
+    // Второй проход: разбор инструкций (ТОЛЬКО известных)
     file.clear();
     file.seekg(0);
     pc = 0;
@@ -223,9 +252,27 @@ std::vector<std::unique_ptr<ASM::Instruction>> parseAssembly(const std::string& 
         std::string opcode;
         if (!(iss >> opcode)) continue;
         
-        if (opcode.back() == ':') continue;
+        // Пропускаем комментарии
+        if (opcode == ";") continue;
         
-        printf("Parsing: %s\n", line.c_str());
+        // Пропускаем метки во втором проходе
+        if (opcode.back() == ':') {
+            // Но проверяем, есть ли инструкция после метки в той же строке
+            if (iss >> opcode) {
+                // Если после метки есть инструкция, обрабатываем ее
+                printf("Processing instruction after label: %s\n", opcode.c_str());
+            } else {
+                continue;
+            }
+        }
+        
+        // Пропускаем неизвестные инструкции
+        if (known_instructions.find(opcode) == known_instructions.end()) {
+            printf("Skipping unknown instruction: %s\n", opcode.c_str());
+            continue;
+        }
+        
+        printf("Parsing known instruction at PC %d: %s\n", pc, opcode.c_str());
         
         if (opcode == "MOV") {
             uint8_t rd;
@@ -233,60 +280,94 @@ std::vector<std::unique_ptr<ASM::Instruction>> parseAssembly(const std::string& 
             std::string reg, imm_str;
             iss >> reg >> imm_str;
             
-            // Убираем 'x' из имени регистра
             rd = std::stoi(reg.substr(1));
-            
-            // Парсим immediate значение
             imm = std::stoi(imm_str);
             
             program.push_back(std::make_unique<ASM::MOV>(rd, imm));
-            printf("Added MOV x%d %d\n", rd, imm);
+            printf("Added MOV x%d %d at PC %d\n", rd, imm, pc);
         }
-
         else if (opcode == "ADD") {
             uint8_t rd, rs1, rs2;
             std::string reg1, reg2, reg3;
             iss >> reg1 >> reg2 >> reg3;
-            rd = std::stoi(reg1.substr(1));
-            rs1 = std::stoi(reg2.substr(1));
-            if (reg3[0] == 'x') {
-                rs2 = std::stoi(reg3.substr(1));
-                program.push_back(std::make_unique<ASM::ADD>(rd, rs1, rs2));
-                printf("Added ADD x%d x%d x%d\n", rd, rs1, rs2);
-            } else {
-                // Если это число, создаем MOV + ADD
-                uint32_t imm = std::stoi(reg3);
-                program.push_back(std::make_unique<ASM::MOV>(15, imm)); // используем временный регистр x15
-                program.push_back(std::make_unique<ASM::ADD>(rd, rs1, 15));
-                printf("Added ADD x%d x%d %d (via MOV+ADD)\n", rd, rs1, imm);
-            }
-        }
-        else if (opcode == "SUB") {
-            uint8_t rd, rs1, rs2;
-            std::string reg1, reg2, reg3;
-            iss >> reg1 >> reg2 >> reg3;
+            
             rd = std::stoi(reg1.substr(1));
             rs1 = std::stoi(reg2.substr(1));
             rs2 = std::stoi(reg3.substr(1));
-            program.push_back(std::make_unique<ASM::SUB>(rd, rs1, rs2));
-            printf("Added SUB x%d x%d x%d\n", rd, rs1, rs2);
+            
+            program.push_back(std::make_unique<ASM::ADD>(rd, rs1, rs2));
+            printf("Added ADD x%d x%d x%d at PC %d\n", rd, rs1, rs2, pc);
         }
-        else if (opcode == "MUL") {
+        else if (opcode == "INIT_FIELD") {
+            program.push_back(std::make_unique<ASM::INIT_FIELD>());
+            printf("Added INIT_FIELD at PC %d\n", pc);
+        }
+        else if (opcode == "RANDOM_INIT") {
+            program.push_back(std::make_unique<ASM::RANDOM_INIT_INSTR>());
+            printf("Added RANDOM_INIT at PC %d\n", pc);
+        }
+        else if (opcode == "CALC_NEIGHBORS") {
+            uint8_t y, x;
+            std::string reg1, reg2;
+            iss >> reg1 >> reg2;
+            y = std::stoi(reg1.substr(1));
+            x = std::stoi(reg2.substr(1));
+            program.push_back(std::make_unique<ASM::CALC_NEIGHBORS>(y, x));
+            printf("Added CALC_NEIGHBORS x%d x%d at PC %d\n", y, x, pc);
+        }
+        else if (opcode == "UPDATE_CELL") {
+            uint8_t y, x;
+            std::string reg1, reg2;
+            iss >> reg1 >> reg2;
+            y = std::stoi(reg1.substr(1));
+            x = std::stoi(reg2.substr(1));
+            program.push_back(std::make_unique<ASM::UPDATE_CELL>(y, x));
+            printf("Added UPDATE_CELL x%d x%d at PC %d\n", y, x, pc);
+        }
+        else if (opcode == "SWAP_BUFFERS") {
+            program.push_back(std::make_unique<ASM::SWAP_BUFFERS>());
+            printf("Added SWAP_BUFFERS at PC %d\n", pc);
+        }
+        else if (opcode == "DRAW_FIELD") {
+            program.push_back(std::make_unique<ASM::DRAW_FIELD>());
+            printf("Added DRAW_FIELD at PC %d\n", pc);
+        }
+        else if (opcode == "DELAY") {
+            uint32_t ms;
+            iss >> ms;
+            program.push_back(std::make_unique<ASM::DELAY>(ms));
+            printf("Added DELAY %d at PC %d\n", ms, pc);
+        }
+        else if (opcode == "FLUSH") {
+            program.push_back(std::make_unique<ASM::FLUSH>());
+            printf("Added FLUSH at PC %d\n", pc);
+        }
+        else if (opcode == "CHECK_FINISH") {
+            uint8_t rd;
+            std::string reg;
+            iss >> reg;
+            rd = std::stoi(reg.substr(1));
+            program.push_back(std::make_unique<ASM::CHECK_FINISH>(rd));
+            printf("Added CHECK_FINISH x%d at PC %d\n", rd, pc);
+        }
+        else if (opcode == "CMP_LT") {
             uint8_t rd, rs1, rs2;
             std::string reg1, reg2, reg3;
             iss >> reg1 >> reg2 >> reg3;
+            
             rd = std::stoi(reg1.substr(1));
             rs1 = std::stoi(reg2.substr(1));
             rs2 = std::stoi(reg3.substr(1));
-            program.push_back(std::make_unique<ASM::MUL>(rd, rs1, rs2));
-            printf("Added MUL x%d x%d x%d\n", rd, rs1, rs2);
+            
+            program.push_back(std::make_unique<ASM::CMP_LT>(rd, rs1, rs2));
+            printf("Added CMP_LT x%d x%d x%d at PC %d\n", rd, rs1, rs2, pc);
         }
         else if (opcode == "JMP") {
             std::string label;
             iss >> label;
             if (labels.find(label) != labels.end()) {
                 program.push_back(std::make_unique<ASM::JMP>(labels[label]));
-                printf("Added JMP %s (PC=%d)\n", label.c_str(), labels[label]);
+                printf("Added JMP %s (PC=%d) at PC %d\n", label.c_str(), labels[label], pc);
             } else {
                 printf("Warning: Label %s not found\n", label.c_str());
             }
@@ -298,7 +379,7 @@ std::vector<std::unique_ptr<ASM::Instruction>> parseAssembly(const std::string& 
             cond = std::stoi(reg.substr(1));
             if (labels.find(label) != labels.end()) {
                 program.push_back(std::make_unique<ASM::JZ>(cond, labels[label]));
-                printf("Added JZ x%d %s (PC=%d)\n", cond, label.c_str(), labels[label]);
+                printf("Added JZ x%d %s (PC=%d) at PC %d\n", cond, label.c_str(), labels[label], pc);
             } else {
                 printf("Warning: Label %s not found\n", label.c_str());
             }
@@ -310,96 +391,20 @@ std::vector<std::unique_ptr<ASM::Instruction>> parseAssembly(const std::string& 
             cond = std::stoi(reg.substr(1));
             if (labels.find(label) != labels.end()) {
                 program.push_back(std::make_unique<ASM::JNZ>(cond, labels[label]));
-                printf("Added JNZ x%d %s (PC=%d)\n", cond, label.c_str(), labels[label]);
+                printf("Added JNZ x%d %s (PC=%d) at PC %d\n", cond, label.c_str(), labels[label], pc);
             } else {
                 printf("Warning: Label %s not found\n", label.c_str());
             }
         }
         else if (opcode == "HALT") {
             program.push_back(std::make_unique<ASM::HALT>());
-            printf("Added HALT\n");
-        }
-        else if (opcode == "INIT_FIELD") {
-            program.push_back(std::make_unique<ASM::INIT_FIELD>());
-            printf("Added INIT_FIELD\n");
-        }
-        else if (opcode == "RANDOM_INIT") {
-            program.push_back(std::make_unique<ASM::RANDOM_INIT_INSTR>());
-            printf("Added RANDOM_INIT\n");
-        }
-        else if (opcode == "CALC_NEIGHBORS") {
-            uint8_t y, x;
-            std::string reg1, reg2;
-            iss >> reg1 >> reg2;
-            y = std::stoi(reg1.substr(1));
-            x = std::stoi(reg2.substr(1));
-            program.push_back(std::make_unique<ASM::CALC_NEIGHBORS>(y, x));
-            printf("Added CALC_NEIGHBORS x%d x%d\n", y, x);
-        }
-        else if (opcode == "UPDATE_CELL") {
-            uint8_t y, x;
-            std::string reg1, reg2;
-            iss >> reg1 >> reg2;
-            y = std::stoi(reg1.substr(1));
-            x = std::stoi(reg2.substr(1));
-            program.push_back(std::make_unique<ASM::UPDATE_CELL>(y, x));
-            printf("Added UPDATE_CELL x%d x%d\n", y, x);
-        }
-        else if (opcode == "SWAP_BUFFERS") {
-            program.push_back(std::make_unique<ASM::SWAP_BUFFERS>());
-            printf("Added SWAP_BUFFERS\n");
-        }
-        else if (opcode == "DRAW_FIELD") {
-            program.push_back(std::make_unique<ASM::DRAW_FIELD>());
-            printf("Added DRAW_FIELD\n");
-        }
-        else if (opcode == "DELAY") {
-            uint32_t ms;
-            iss >> ms;
-            program.push_back(std::make_unique<ASM::DELAY>(ms));
-            printf("Added DELAY %d\n", ms);
-        }
-        else if (opcode == "FLUSH") {
-            program.push_back(std::make_unique<ASM::FLUSH>());
-            printf("Added FLUSH\n");
-        }
-        else if (opcode == "CHECK_FINISH") {
-            uint8_t rd;
-            std::string reg;
-            iss >> reg;
-            rd = std::stoi(reg.substr(1));
-            program.push_back(std::make_unique<ASM::CHECK_FINISH>(rd));
-            printf("Added CHECK_FINISH x%d\n", rd);
-        }
-        else if (opcode == "CMP") {
-            uint8_t rd, rs1, rs2;
-            std::string reg1, reg2, reg3;
-            iss >> reg1 >> reg2 >> reg3;
-            
-            rd = std::stoi(reg1.substr(1));
-            rs1 = std::stoi(reg2.substr(1));
-            
-            if (reg3[0] == 'x') {
-                rs2 = std::stoi(reg3.substr(1));
-            } else {
-                // Если сравниваем с числом, используем временный регистр
-                uint32_t imm = std::stoi(reg3);
-                program.push_back(std::make_unique<ASM::MOV>(14, imm)); // x14 - временный
-                rs2 = 14;
-            }
-            
-            program.push_back(std::make_unique<ASM::CMP>(rd, rs1, rs2));
-            printf("Added CMP x%d x%d x%d\n", rd, rs1, rs2);
-        }
-        else {
-            printf("Unknown instruction: %s\n", opcode.c_str());
-            continue;
+            printf("Added HALT at PC %d\n", pc);
         }
         
         pc++;
     }
     
-    printf("Parsed %zu instructions\n", program.size());
+    printf("Final program size: %zu instructions\n", program.size());
     return program;
 }
 
@@ -448,6 +453,8 @@ void generateIR(const std::vector<std::unique_ptr<ASM::Instruction>>& program, c
     llvm::Function::Create(voidFuncType, llvm::Function::ExternalLinkage, "do_DRAW_FIELD", &module);
     llvm::Function::Create(voidFuncType, llvm::Function::ExternalLinkage, "do_FLUSH", &module);
     llvm::Function::Create(tripleFuncType, llvm::Function::ExternalLinkage, "do_CMP", &module);
+    llvm::Function::Create(tripleFuncType, llvm::Function::ExternalLinkage, "do_CMP_LT", &module);
+    llvm::Function::Create(tripleFuncType, llvm::Function::ExternalLinkage, "do_CMP_GT", &module);
 
     
     // Генерация кода для каждой инструкции
@@ -537,6 +544,22 @@ void generateIR(const std::vector<std::unique_ptr<ASM::Instruction>>& program, c
             };
             builder.CreateCall(module.getFunction("do_CMP"), args);
         }
+        else if (auto cmp_lt = dynamic_cast<ASM::CMP_LT*>(instr.get())) {
+            llvm::Value* args[] = {
+                llvm::ConstantInt::get(i32Type, cmp_lt->rd),
+                llvm::ConstantInt::get(i32Type, cmp_lt->rs1),
+                llvm::ConstantInt::get(i32Type, cmp_lt->rs2)
+            };
+            builder.CreateCall(module.getFunction("do_CMP_LT"), args);
+        }
+        else if (auto cmp_gt = dynamic_cast<ASM::CMP_GT*>(instr.get())) {
+            llvm::Value* args[] = {
+                llvm::ConstantInt::get(i32Type, cmp_gt->rd),
+                llvm::ConstantInt::get(i32Type, cmp_gt->rs1),
+                llvm::ConstantInt::get(i32Type, cmp_gt->rs2)
+            };
+            builder.CreateCall(module.getFunction("do_CMP_GT"), args);
+        }
     }
     
     // Если не было HALT, добавляем возврат
@@ -564,26 +587,45 @@ void generateIR(const std::vector<std::unique_ptr<ASM::Instruction>>& program, c
 void interpret(const std::vector<std::unique_ptr<ASM::Instruction>>& program) {
     cpu.pc = 0;
     cpu.running = true;
-
-    int max_cycles=1000;
-    int i = 0;
     
-    while (cpu.running && cpu.pc < program.size()) {
+    const int MAX_CYCLES = 10000000;
+    int cycle_count = 0;
+    
+    auto dump_state = [&]() {
+        std::cout << "=== STATE DUMP ===" << std::endl;
+        std::cout << "PC: " << cpu.pc << ", Cycles: " << cycle_count << std::endl;
+        std::cout << "Registers: ";
+        for (int i = 0; i < 8; i++) {
+            std::cout << "x" << i << "=" << cpu.regs[i] << " ";
+        }
+        std::cout << std::endl;
+        std::cout << "Current cell being processed: (" << cpu.regs[1] << "," << cpu.regs[2] << ")" << std::endl;
+        std::cout << "==================" << std::endl;
+    };
+    
+    while (cpu.running && cpu.pc < program.size() && cycle_count < MAX_CYCLES) {
+        if (cycle_count % 1000 == 0) {
+            dump_state();
+        }
+        
+        uint32_t current_pc = cpu.pc;
+
         std::cout << "PC: " << cpu.pc << " - ";
         program[cpu.pc]->execute(cpu);
+        cycle_count++;
         
-        // Автоинкремент PC, если инструкция не изменила его
-        if (!dynamic_cast<ASM::JMP*>(program[cpu.pc].get()) && 
-            !dynamic_cast<ASM::JZ*>(program[cpu.pc].get()) && 
-            !dynamic_cast<ASM::JNZ*>(program[cpu.pc].get())) {
+        // ВАЖНО: увеличиваем PC для ВСЕХ инструкций, кроме тех, которые уже изменили PC
+        if (!dynamic_cast<ASM::JMP*>(program[current_pc].get()) && 
+            !dynamic_cast<ASM::JZ*>(program[current_pc].get()) && 
+            !dynamic_cast<ASM::JNZ*>(program[current_pc].get())) {
             cpu.pc++;
+            std::cout << "Auto-incremented PC to " << cpu.pc << "\n";
         }
-
-        i++;
-        if (i >= max_cycles) {
-            std::cout << "Max cycles reached, stopping interpretation.\n";
-            break;
-        }
+    }
+    
+    if (cycle_count >= MAX_CYCLES) {
+        std::cout << "Max cycles reached, stopping interpretation.\n";
+        dump_state();
     }
 }
 

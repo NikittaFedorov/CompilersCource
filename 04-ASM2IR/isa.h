@@ -124,7 +124,7 @@ namespace ASM {
         uint32_t target;
         JMP(uint32_t t) : target(t) {}
         void execute(CPUState& cpu) override {
-            cpu.pc = target;
+            cpu.pc = target;  // Устанавливаем PC напрямую
             printf("JMP: -> %d\n", target);
         }
         std::string toString() const override {
@@ -139,11 +139,11 @@ namespace ASM {
         JZ(uint8_t c, uint32_t t) : cond(c), target(t) {}
         void execute(CPUState& cpu) override {
             if (cpu.regs[cond] == 0) {
-                cpu.pc = target;
-                printf("JZ: x%d == 0 -> %d\n", cond, target);
+                cpu.pc = target;  // Прыгаем на target
+                printf("JZ: x%d == 0 -> jump to %d\n", cond, target);
             } else {
-                cpu.pc++;
-                printf("JZ: x%d != 0 -> skip\n", cond);
+                cpu.pc++;  // Переходим к следующей инструкции
+                printf("JZ: x%d != 0 -> continue to next instruction\n", cond);
             }
         }
         std::string toString() const override {
@@ -158,11 +158,11 @@ namespace ASM {
         JNZ(uint8_t c, uint32_t t) : cond(c), target(t) {}
         void execute(CPUState& cpu) override {
             if (cpu.regs[cond] != 0) {
-                cpu.pc = target;
-                printf("JNZ: x%d != 0 -> %d\n", cond, target);
+                cpu.pc = target;  // Прыгаем на target
+                printf("JNZ: x%d != 0 -> jump to %d\n", cond, target);
             } else {
-                cpu.pc++;
-                printf("JNZ: x%d == 0 -> skip\n", cond);
+                cpu.pc++;  // Переходим к следующей инструкции
+                printf("JNZ: x%d == 0 -> continue to next instruction\n", cond);
             }
         }
         std::string toString() const override {
@@ -366,6 +366,32 @@ namespace ASM {
         }
         std::string toString() const override {
             return "CMP x" + std::to_string(rd) + " x" + std::to_string(rs1) + " x" + std::to_string(rs2);
+        }
+    };
+
+    class CMP_LT : public Instruction {
+    public:
+        uint8_t rd, rs1, rs2;
+        CMP_LT(uint8_t d, uint8_t s1, uint8_t s2) : rd(d), rs1(s1), rs2(s2) {}
+        void execute(CPUState& cpu) override {
+            cpu.regs[rd] = (cpu.regs[rs1] < cpu.regs[rs2]) ? 1 : 0;
+            printf("CMP_LT: x%d = (x%d < x%d) -> %d\n", rd, rs1, rs2, cpu.regs[rd]);
+        }
+        std::string toString() const override {
+            return "CMP_LT x" + std::to_string(rd) + " x" + std::to_string(rs1) + " x" + std::to_string(rs2);
+        }
+    };
+
+    class CMP_GT : public Instruction {
+    public:
+        uint8_t rd, rs1, rs2;
+        CMP_GT(uint8_t d, uint8_t s1, uint8_t s2) : rd(d), rs1(s1), rs2(s2) {}
+        void execute(CPUState& cpu) override {
+            cpu.regs[rd] = (cpu.regs[rs1] > cpu.regs[rs2]) ? 1 : 0;
+            printf("CMP_GT: x%d = (x%d > x%d) -> %d\n", rd, rs1, rs2, cpu.regs[rd]);
+        }
+        std::string toString() const override {
+            return "CMP_GT x" + std::to_string(rd) + " x" + std::to_string(rs1) + " x" + std::to_string(rs2);
         }
     };
 }
