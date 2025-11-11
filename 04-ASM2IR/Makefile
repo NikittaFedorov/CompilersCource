@@ -1,23 +1,28 @@
 CXX = clang++
 CXXFLAGS = -g -O0 -std=c++17 -I.
-LLVM_FLAGS = `llvm-config --cxxflags --ldflags --system-libs --libs core executionengine mcjit interpreter analysis native`
+LLVM_FLAGS = `llvm-config --cxxflags --ldflags --system-libs --libs core`
 SDL_FLAGS = -lSDL2
 
-all: asm2ir_emulator
+all: interpreter asm2ir
 
-asm2ir_emulator: asm2ir_emulator.cpp sim.o
+interpreter: interpreter.cpp sim.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(SDL_FLAGS)
+
+asm2ir: asm2ir.cpp sim.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LLVM_FLAGS) $(SDL_FLAGS)
 
 sim.o: sim.c sim.h
 	$(CC) -c -o $@ $< $(SDL_FLAGS)
 
 clean:
-	rm -f asm2ir_emulator sim.o *.ll
+	rm -f interpreter asm2ir sim.o *.ll
 
-test: asm2ir_emulator
-	./asm2ir_emulator game_of_life.asm game_of_life.ll
+test_interpreter: interpreter
+	./interpreter game_life.asm
 
-run: asm2ir_emulator
-	./asm2ir_emulator game_of_life.asm game_of_life.ll
+test_ir: asm2ir
+	./asm2ir game_life.asm game_life.ll
 
-.PHONY: all clean test run
+test: test_interpreter test_ir
+
+.PHONY: all clean test test_interpreter test_ir
