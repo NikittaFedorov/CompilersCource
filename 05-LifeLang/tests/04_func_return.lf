@@ -1,0 +1,9 @@
+func forty_two() : i32 {
+  return 40 + 2;
+}
+
+func main() : i32 {
+  var x = forty_two();
+  if (x != 42) { return 1; }
+  return 0;
+}
